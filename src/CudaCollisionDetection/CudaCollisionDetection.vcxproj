@@ -154,7 +154,7 @@
     <ClInclude Include="Board.hpp" />
     <ClInclude Include="Camera.hpp" />
     <ClInclude Include="Light.hpp" />
-    <ClInclude Include="MovingBall.hpp" />
+    <ClInclude Include="Ball.hpp" />
     <ClInclude Include="Point.hpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

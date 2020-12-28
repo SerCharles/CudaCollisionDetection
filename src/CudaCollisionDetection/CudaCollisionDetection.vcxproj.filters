@@ -34,10 +34,10 @@
     <ClInclude Include="Light.hpp">
       <Filter>头文件</Filter>
     </ClInclude>
-    <ClInclude Include="MovingBall.hpp">
+    <ClInclude Include="Point.hpp">
       <Filter>头文件</Filter>
     </ClInclude>
-    <ClInclude Include="Point.hpp">
+    <ClInclude Include="Ball.hpp">
       <Filter>头文件</Filter>
     </ClInclude>
   </ItemGroup>
