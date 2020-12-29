@@ -7,6 +7,7 @@
 #include "Light.hpp"
 #include "Camera.hpp"
 #include "Board.hpp"
+#include "BallList.hpp"
 #include "collision.cuh"
 using namespace std;
 

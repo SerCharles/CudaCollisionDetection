@@ -143,9 +143,9 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <CudaCompile Include="collision.cuh">
+    <ClInclude Include="BallList.hpp">
       <FileType>Document</FileType>
-    </CudaCompile>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />
@@ -153,9 +153,13 @@
   <ItemGroup>
     <ClInclude Include="Board.hpp" />
     <ClInclude Include="Camera.hpp" />
+    <ClInclude Include="Collision.cuh" />
     <ClInclude Include="Light.hpp" />
     <ClInclude Include="Ball.hpp" />
     <ClInclude Include="Point.hpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <CudaCompile Include="Collision.cu" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
