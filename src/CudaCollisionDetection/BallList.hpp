@@ -146,6 +146,9 @@ public:
 		static int total_num = 0;
 		static float total_time = 0;
 
+		clock_t start, end;
+		start = clock();
+
 		if (Mode == NAIVE_CPU)
 		{
 			CollisionNaive();
@@ -163,6 +166,17 @@ public:
 		else if (Mode == FAST_GPU)
 		{
 			//UpdateBallsOctTreeGPU(balls, TimeOnce, XRange, ZRange, Height, NBalls);
+		}
+		end = clock();
+		float duration = float(end - start) / CLOCKS_PER_SEC * 1000;
+		total_num++;
+		total_time += duration;
+		if (total_num == 10000)
+		{
+			float average_time = total_time / total_num;
+			cout << total_num << "次碰撞检测平均耗时" << average_time << "ms" << endl;
+			total_num = 0;
+			total_time = 0;
 		}
 	}
 
