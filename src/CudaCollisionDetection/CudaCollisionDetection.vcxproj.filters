@@ -20,11 +20,6 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <CudaCompile Include="collision.cu">
-      <Filter>源文件</Filter>
-    </CudaCompile>
-  </ItemGroup>
-  <ItemGroup>
     <ClInclude Include="Board.hpp">
       <Filter>头文件</Filter>
     </ClInclude>
@@ -40,5 +35,10 @@
     <ClInclude Include="Ball.hpp">
       <Filter>头文件</Filter>
     </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <CudaCompile Include="collision.cuh">
+      <Filter>头文件</Filter>
+    </CudaCompile>
   </ItemGroup>
 </Project>

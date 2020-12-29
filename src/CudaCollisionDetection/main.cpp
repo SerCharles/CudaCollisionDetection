@@ -7,6 +7,7 @@
 #include "Light.hpp"
 #include "Camera.hpp"
 #include "Board.hpp"
+#include "collision.cuh"
 using namespace std;
 
 
@@ -14,7 +15,8 @@ using namespace std;
 const int WindowSizeX = 800, WindowSizeY = 600, WindowPlaceX = 100, WindowPlaceY = 100;
 const char WindowName[] = "MyScene";
 const float TimeOnce = 0.02; //刷新时间
-const float XRange = 30, ZRange = 30, Height = 20; //场景的X,Y,Z范围（-X,X),(0,H),(-Z,Z)
+const float XRange = 30, ZRange = 30, Height = 20, MaxRadius = 1; //场景的X,Y,Z范围（-X,X),(0,H),(-Z,Z)
+int GlobalMode = -1;
 
 //光照，相机
 Camera TheCamera;
@@ -127,7 +129,7 @@ void InitScene()
 	InitLight();
 	InitCamera();
 	InitBoards();
-	Balls.Init(XRange, Height, ZRange, 4, 1);
+	Balls.Init(XRange, Height, ZRange, 4, MaxRadius, TimeOnce, GlobalMode);
 	Balls.InitBalls();
 }
 
@@ -257,9 +259,49 @@ void reshape(int w, int h)
 	glMatrixMode(GL_MODELVIEW);
 }
 
+void InitSettings()
+{
+	while (1)
+	{
+		int mode;
+		cout << "请输出碰撞检测算法类型" <<endl;
+		cout << "0：串行，无加速碰撞检测" << endl;
+		cout << "1：并行，无加速碰撞检测" << endl;
+		cout << "2：串行，八叉树加速碰撞检测" << endl;
+		cout << "3：并行，八叉树加速碰撞检测" << endl;
+		cin >> mode;
+		if (mode >= 0 && mode <= 3)
+		{
+			cout << "当前模式为：";
+			if (mode == NAIVE_CPU)
+			{
+				cout << "0：串行，无加速碰撞检测" << endl;
+			}
+			else if (mode == NAIVE_GPU)
+			{
+				cout << "1：并行，无加速碰撞检测" << endl;
+			}
+			else if (mode == FAST_CPU)
+			{
+				cout << "2：串行，八叉树加速碰撞检测" << endl;
+			}
+			else if (mode == FAST_GPU)
+			{
+				cout << "3：并行，八叉树加速碰撞检测" << endl;
+			}
+			GlobalMode = mode;
+			break;
+		}
+		else
+		{
+			printf("输入不合法，请重新输入！\n");
+		}
+	}
+}
+
 int main(int argc, char**argv)
 {
-
+	InitSettings();
 	glutInit(&argc, argv); 
 	InitWindow();             //初始化窗口
 	InitScene();              //初始化场景

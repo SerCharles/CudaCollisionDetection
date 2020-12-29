@@ -6,17 +6,7 @@ using namespace std;
 
 #define PI 3.1415926
 
-float max(float a, float b)
-{
-	if (a > b) return a;
-	return b;
-}
 
-float min(float a, float b)
-{
-	if (a < b) return a;
-	return b;
-}
 
 //3D点的基类
 class Point
@@ -67,12 +57,30 @@ public:
 		c.z = z * b;
 		return c;
 	}
+	Point operator/(const float& b)
+	{
+		Point c;
+		c.x = x / b;
+		c.y = y / b;
+		c.z = z / b;
+		return c;
+	}
 	float operator*(const Point& b)
 	{
 		float sum = 0;
 		sum += x * b.x;
 		sum += y * b.y;
 		sum += z * b.z;
+		return sum;
+	}
+
+	float Dist()
+	{
+		float sum = 0;
+		sum += x * x;
+		sum += y * y;
+		sum += z * z;
+		sum = sqrt(sum);
 		return sum;
 	}
 };
