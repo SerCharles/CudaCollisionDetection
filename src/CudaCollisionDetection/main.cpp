@@ -16,7 +16,7 @@ using namespace std;
 const int WindowSizeX = 800, WindowSizeY = 600, WindowPlaceX = 100, WindowPlaceY = 100;
 const char WindowName[] = "MyScene";
 const float TimeOnce = 0.02; //刷新时间
-const float XRange = 30, ZRange = 30, Height = 20, MaxRadius = 1; //场景的X,Y,Z范围（-X,X),(0,H),(-Z,Z)
+const float XRange = 30, ZRange = 30, Height = 60, MaxRadius = 1; //场景的X,Y,Z范围（-X,X),(0,H),(-Z,Z)
 int GlobalMode = -1;
 
 //光照，相机
@@ -279,8 +279,8 @@ void InitSettings()
 		cout << "请输出碰撞检测算法类型" <<endl;
 		cout << "0：串行，无加速碰撞检测" << endl;
 		cout << "1：并行，无加速碰撞检测" << endl;
-		cout << "2：串行，八叉树加速碰撞检测" << endl;
-		cout << "3：并行，八叉树加速碰撞检测" << endl;
+		cout << "2：串行，空间划分加速碰撞检测" << endl;
+		cout << "3：并行，空间划分加速碰撞检测" << endl;
 		cin >> mode;
 		if (mode >= 0 && mode <= 3)
 		{

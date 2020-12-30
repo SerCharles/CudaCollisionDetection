@@ -13,6 +13,8 @@ using namespace std;
 #define NAIVE_GPU 1
 #define FAST_CPU 2
 #define FAST_GPU 3
+#define HOME_CELL 0
+#define PHANTOM_CELL 1
 
 class BallList
 {
@@ -27,6 +29,9 @@ public:
 	float MaxRadius;
 	float TimeOnce;
 	int Mode;
+	float GridSize;
+	int GridX, GridY, GridZ;
+
 
 	/*
 	描述：初始化位置信息
@@ -43,6 +48,11 @@ public:
 		Mode = mode;
 		NBalls = num * num * num;
 		balls = new Ball[NBalls];
+		GridSize = max_radius * 1.5;
+		GridX = ceil(XRange * 2 / GridSize);
+		GridY = ceil(Height / GridSize);
+		GridZ = ceil(ZRange * 2 / GridSize);
+
 	}
 
 	void InitBalls()
@@ -160,7 +170,7 @@ public:
 		}
 		else if (Mode == FAST_CPU)
 		{
-			CollisionOctTree();
+			CollisionGrid();
 			UpdateBallsMove();
 		}
 		else if (Mode == FAST_GPU)
@@ -218,8 +228,128 @@ public:
 	参数：无
 	返回：无
 	*/
-	void CollisionOctTree()
+	void CollisionGrid()
 	{
+
+	}
+
+	/*
+	描述：获取球对应的grid home坐标
+	参数：球
+	返回：home坐标
+	*/
+	int GetHomeNum(Ball& ball)
+	{
+		int place_x = floor((ball.CurrentPlace.x + XRange) / GridSize);
+		int place_y = floor(ball.CurrentPlace.y / GridSize);
+		int place_z = floor((ball.CurrentPlace.x + ZRange) / GridSize);
+		int num = place_x * GridY * GridZ + place_y * GridZ + place_z;
+		return num;
+	}
+
+	/*
+	描述：获取球对应的grid坐标
+	参数：球, home坐标
+	返回：phantom坐标
+	*/
+	vector<int> GetPhantomNums(Ball& ball, int home_num)
+	{
+		vector<int> phantom_nums;
+		phantom_nums.clear();
+		for (int i = -1; i <= 1; i++)
+		{
+			for (int j = -1; j <= 1; j++)
+			{
+				for (int k = -1; k <= 1; k++)
+				{
+					int current_num = home_num + i * GridY * GridZ + j * GridZ + k;
+					if (current_num < 0 || current_num >= GridX * GridY * GridZ)
+					{
+						continue;
+					}
+					int home_x = home_num / (GridY * GridZ);
+					int home_y = (home_num - home_x * GridY * GridZ) / GridZ;
+					int home_z = home_num % GridZ;
+
+					Point relative;
+					if (i == 0)
+					{
+						relative.x = ball.CurrentPlace.x;
+					}
+					else if (i == -1)
+					{
+						relative.x = home_x * GridSize - XRange;
+					}
+					else
+					{
+						relative.x = (home_x + 1) * GridSize - XRange;
+					}
+
+					if (k == 0)
+					{
+						relative.z = ball.CurrentPlace.z;
+					}
+					else if (k == -1)
+					{
+						relative.z = home_z * GridSize - ZRange;
+					}
+					else
+					{
+						relative.z = (home_z + 1) * GridSize - ZRange;
+					}
+
+					if (j == 0)
+					{
+						relative.y = ball.CurrentPlace.y;
+					}
+					else if (j == -1)
+					{
+						relative.y = home_y * GridSize;
+					}
+					else
+					{
+						relative.y = (home_y + 1) * GridSize;
+					}
+
+					float dist = (ball.CurrentPlace - relative).Dist();
+					if (dist > ball.Radius)
+					{
+						phantom_nums.push_back(current_num);
+					}
+				}
+			}
+		}
+		return phantom_nums;
+	}
+
+	/*
+	描述：建立object-cell的数据结构
+	参数：无
+	返回：无
+	*/
+	void BuildObjectCell()
+	{
+		vector<int> cell_type;
+		vector<int> object_num;
+		vector<int> cell_num;
+		cell_type.clear();
+		object_num.clear();
+		cell_num.clear();
+		for (int i = 0; i < NBalls; i++)
+		{
+			int home_num = GetHomeNum(balls[i]);
+			vector<int> phantom_nums = GetPhantomNums(balls[i], home_num);
+			cell_type.push_back(HOME_CELL);
+			cell_num.push_back(home_num);
+			object_num.push_back(i);
+
+			for (int j = 0; j < phantom_nums.size(); j++)
+			{
+				cell_type.push_back(PHANTOM_CELL);
+				cell_num.push_back(phantom_nums[j]);
+				object_num.push_back(i);
+			}
+		}
 
 	}
 
