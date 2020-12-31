@@ -16,7 +16,8 @@ using namespace std;
 const int WindowSizeX = 800, WindowSizeY = 600, WindowPlaceX = 100, WindowPlaceY = 100;
 const char WindowName[] = "MyScene";
 const float TimeOnce = 0.02; //刷新时间
-const float XRange = 30, ZRange = 30, Height = 60, MaxRadius = 1; //场景的X,Y,Z范围（-X,X),(0,H),(-Z,Z)
+const int BallNum = 2;
+const float XRange = 9, ZRange = 9, Height = 18, MaxRadius = 1; //场景的X,Y,Z范围（-X,X),(0,H),(-Z,Z)
 int GlobalMode = -1;
 
 //光照，相机
@@ -141,7 +142,7 @@ void InitScene()
 	InitLight();
 	InitCamera();
 	InitBoards();
-	Balls.Init(XRange, Height, ZRange, 4, MaxRadius, TimeOnce, GlobalMode);
+	Balls.Init(XRange, Height, ZRange, BallNum, MaxRadius, TimeOnce, GlobalMode);
 	Balls.InitBalls();
 }
 
