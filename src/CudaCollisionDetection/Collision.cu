@@ -450,7 +450,7 @@ __global__ void InitCellKernel(uint32_t *cells, uint32_t *objects, Ball* balls, 
 
  */
 
- unsigned int cudaInitCells(uint32_t *cells, uint32_t *objects, Ball* balls, int N,
+ unsigned int InitCellsCuda(uint32_t *cells, uint32_t *objects, Ball* balls, int N,
 	 float XRange, float ZRange, float Height, float GridSize, int GridX, int GridY, int GridZ, 
 	 unsigned int* cell_count_temp, unsigned int num_blocks, unsigned int threads_per_block) {
 	 unsigned int cell_count;
@@ -473,6 +473,48 @@ void HandleCollisionGrid(Ball* balls, float XRange, float ZRange, float Height,
 	unsigned int num_blocks, unsigned int threads_per_block)
 {
 
+	//申请内存
+	unsigned int cell_size = N * 8 * sizeof(uint32_t);
+	unsigned int num_cells_occupied;
+	/*unsigned int num_collisions;
+	unsigned int num_collisions_cpu;
+	unsigned int num_tests;
+	unsigned int num_tests_cpu;*/
+
+	uint32_t *cells_gpu;
+	uint32_t *cells_gpu_temp;
+	uint32_t *objects_gpu;
+	uint32_t *objects_gpu_temp;
+	unsigned int *temp_gpu;
+	//uint32_t *radices_gpu;
+	//uint32_t *radix_sums_gpu;
+
+	cudaMalloc((void **)&cells_gpu, cell_size);
+	cudaMalloc((void **)&cells_gpu_temp, cell_size);
+	cudaMalloc((void **)&objects_gpu, cell_size);
+	cudaMalloc((void **)&objects_gpu_temp, cell_size);
+	cudaMalloc((void **)&temp_gpu, 2 * sizeof(unsigned int));
+	//cudaMalloc((void **)&radices_gpu, NUM_BLOCKS * GROUPS_PER_BLOCK * NUM_RADICES * sizeof(uint32_t));
+	//cudaMalloc((void **)&radix_sums_gpu, NUM_RADICES * sizeof(uint32_t));
+
+	//主函数
+	num_cells_occupied = InitCellsCuda(cells_gpu, objects_gpu, balls, N,
+		XRange, ZRange, Height, GridSize, GridX, GridY, GridZ,
+		temp_gpu, num_blocks, threads_per_block);
+	/*cudaSortCells(d_cells, d_objects, d_cells_temp, d_objects_temp, d_radices,
+		d_radix_sums, num_objects);*/
+	/*num_collisions = cudaCellCollide(d_cells, d_objects, d_positions,
+		d_velocities, d_dims, num_objects,
+		num_cells, d_temp, &num_tests, num_blocks,
+		threads_per_block);*/
+
+	cudaFree(temp_gpu);
+	cudaFree(cells_gpu);
+	cudaFree(cells_gpu_temp);
+	cudaFree(objects_gpu);
+	cudaFree(objects_gpu_temp);
+	//cudaFree(radices_gpu);
+	//cudaFree(radix_sums_gpu);
 }
 
 
@@ -484,19 +526,21 @@ void HandleCollisionGrid(Ball* balls, float XRange, float ZRange, float Height,
 void UpdateBallsGridGPU(Ball* balls, float TimeOnce, float XRange, float ZRange, float Height, 
 	float GridSize, int GridX, int GridY, int GridZ, int N)
 {
-	// 申请托管内存
-	int nBytes = N * sizeof(Ball);
+	//设置，计算需要多少block和thread
+	unsigned int num_blocks = 100;
+	unsigned int threads_per_block = 512;
+	unsigned int object_size = (N - 1) / threads_per_block + 1;
+	if (object_size < num_blocks) {
+		num_blocks = object_size;
+	}
+
 	Ball* balls_gpu;
-	cudaMallocManaged((void**)&balls_gpu, nBytes);
+	unsigned int nBytes = N * sizeof(Ball);
+	cudaMalloc((void**)&balls_gpu, nBytes);
+
 
 	// 初始化数据
 	cudaMemcpy((void*)balls_gpu, (void*)balls, nBytes, cudaMemcpyHostToDevice);
-
-	// 定义kernel的执行配置
-	dim3 blockSize(256);
-	dim3 gridSize((N + blockSize.x - 1) / blockSize.x);
-	unsigned int num_blocks = 100;
-	unsigned int threads_per_block = 512;
 
 	// 执行kernel
 	HandleCollisionGrid(balls_gpu, XRange, ZRange, Height, GridSize, GridX, GridY, GridZ, N, num_blocks, threads_per_block);
@@ -504,7 +548,7 @@ void UpdateBallsGridGPU(Ball* balls, float TimeOnce, float XRange, float ZRange,
 	cudaDeviceSynchronize();
 
 	// 执行kernel
-	UpdateBallsMove << < gridSize, blockSize >> > (balls_gpu, TimeOnce, XRange, ZRange, Height, N);
+	UpdateBallsMove << < num_blocks, threads_per_block>> > (balls_gpu, TimeOnce, XRange, ZRange, Height, N);
 	// 同步device 保证结果能正确访问
 	cudaDeviceSynchronize();
 

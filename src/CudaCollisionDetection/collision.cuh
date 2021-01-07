@@ -11,5 +11,4 @@
 void UpdateBallsNaiveGPU(Ball* balls, float TimeOnce, float XRange, float ZRange, float Height, int N);
 
 void UpdateBallsGridGPU(Ball* balls, float TimeOnce, float XRange, float ZRange, float Height, 
-	float GridSize, int GridX, int GridY, int GridZ, int N,
-	unsigned int num_blocks, unsigned int threads_per_block);
+	float GridSize, int GridX, int GridY, int GridZ, int N);

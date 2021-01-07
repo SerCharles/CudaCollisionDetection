@@ -175,7 +175,7 @@ public:
 		}
 		else if (Mode == FAST_GPU)
 		{
-			//UpdateBallsOctTreeGPU(balls, TimeOnce, XRange, ZRange, Height, NBalls);
+			UpdateBallsGridGPU(balls, TimeOnce, XRange, ZRange, Height, GridSize, GridX, GridY, GridZ, NBalls);
 		}
 		end = clock();
 		float duration = float(end - start) / CLOCKS_PER_SEC * 1000;
