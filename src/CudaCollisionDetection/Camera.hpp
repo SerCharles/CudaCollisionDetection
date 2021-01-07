@@ -16,7 +16,7 @@ public:
 	int MouseY;
 	const float K_Horizontal = 0.002; //水平移动速度
 	const float K_Vertical = 0.03; //垂直移动速度
-	const float K_Translate = 0.2; //平移毒素
+	const float K_Translate = 0.2; //平移速度
 public:
 	Camera(){}
 
