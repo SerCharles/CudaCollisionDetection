@@ -8,6 +8,14 @@
 #define HOME_OBJECT 0x01
 #define PHANTOM_OBJECT 0x00
 
+#define L 8
+#define NUM_RADICES 256
+#define NUM_BLOCKS 16
+#define GROUPS_PER_BLOCK 12
+#define THREADS_PER_GROUP 16
+#define PADDED_BLOCKS 16
+#define PADDED_GROUPS 256
+
 void UpdateBallsNaiveGPU(Ball* balls, float TimeOnce, float XRange, float ZRange, float Height, int N);
 
 void UpdateBallsGridGPU(Ball* balls, float TimeOnce, float XRange, float ZRange, float Height, 
