@@ -8,8 +8,7 @@
 #define HOME_OBJECT 0x01
 #define PHANTOM_OBJECT 0x00
 
-#define L 8
-#define NUM_RADICES 256
+#define RADIX_LENGTH 8
 #define NUM_BLOCKS 16
 #define GROUPS_PER_BLOCK 12
 #define THREADS_PER_GROUP 16

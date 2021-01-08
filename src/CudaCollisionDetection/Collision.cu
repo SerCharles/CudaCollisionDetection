@@ -335,7 +335,7 @@ __global__ void InitCellKernel(uint32_t *cells, uint32_t *objects, Ball* balls, 
 		int hash_x = (x + XRange) / GridSize;
 		int hash_y = (y) / GridSize;
 		int hash_z = (z + ZRange) / GridSize;
-		cell_info = hash_x << 17 | hash_y << 9 | hash_z | HOME_CELL;
+		cell_info = hash_x << 17 | hash_y << 9 | hash_z << 1 | HOME_CELL;
 		object_info = i << 1 | HOME_OBJECT;
 		cells[current_cell_id] = cell_info;
 		objects[current_cell_id] = object_info;
@@ -470,21 +470,25 @@ __global__ void InitCellKernel(uint32_t *cells, uint32_t *objects, Ball* balls, 
 	 uint32_t *keys_out, uint32_t *values_out,
 	 uint32_t *radices, uint32_t *radix_sums,
 	 unsigned int n, unsigned int cells_per_group,
-	 int shift) {
+	 int shift) 
+ {
+	 int num_radices = 1 << RADIX_LENGTH;
 	 extern __shared__ uint32_t s[];
-	 uint32_t *t = s + NUM_RADICES;
+	 uint32_t *t = s + num_radices;
 	 int group = threadIdx.x / THREADS_PER_GROUP;
 	 int group_start = (blockIdx.x * GROUPS_PER_BLOCK + group) * cells_per_group;
 	 int group_end = group_start + cells_per_group;
 	 uint32_t k;
 
 	 // initialize shared memory
-	 for (int i = threadIdx.x; i < NUM_RADICES; i += blockDim.x) {
+	 for (int i = threadIdx.x; i < num_radices; i += blockDim.x) 
+	 {
 		 s[i] = radix_sums[i];
 
 		 // copy the last element in each prefix-sum to a separate array
-		 if (!((i + 1) % (NUM_RADICES / NUM_BLOCKS))) {
-			 t[i / (NUM_RADICES / NUM_BLOCKS)] = s[i];
+		 if (!((i + 1) % (num_radices / NUM_BLOCKS))) 
+		 {
+			 t[i / (num_radices / NUM_BLOCKS)] = s[i];
 		 }
 	 }
 
@@ -498,19 +502,20 @@ __global__ void InitCellKernel(uint32_t *cells, uint32_t *objects, Ball* balls, 
 	 __syncthreads();
 
 	 // calculate prefix-sum on radix counters
-	 dPrefixSum(t, PADDED_BLOCKS);
+	 PrefixSum(t, PADDED_BLOCKS);
 	 __syncthreads();
 
 	 // add offsets to prefix-sum values
-	 for (int i = threadIdx.x; i < NUM_RADICES; i += blockDim.x) {
-		 s[i] += t[i / (NUM_RADICES / NUM_BLOCKS)];
+	 for (int i = threadIdx.x; i < num_radices; i += blockDim.x)
+	 {
+		 s[i] += t[i / (num_radices / NUM_BLOCKS)];
 	 }
 
 	 __syncthreads();
 
 	 // add offsets to radix counters
-	 for (int i = threadIdx.x; i < GROUPS_PER_BLOCK * NUM_RADICES; i +=
-		 blockDim.x) {
+	 for (int i = threadIdx.x; i < GROUPS_PER_BLOCK * num_radices; i += blockDim.x)
+	 {
 		 t[i] = radices[(i / GROUPS_PER_BLOCK * NUM_BLOCKS + blockIdx.x) *
 			 GROUPS_PER_BLOCK + i % GROUPS_PER_BLOCK] + s[i / GROUPS_PER_BLOCK];
 	 }
@@ -521,7 +526,7 @@ __global__ void InitCellKernel(uint32_t *cells, uint32_t *objects, Ball* balls, 
 	 for (int i = group_start + threadIdx.x % THREADS_PER_GROUP; i < group_end &&
 		 i < n; i += THREADS_PER_GROUP) {
 		 // need only avoid bank conflicts by group
-		 k = (keys_in[i] >> shift & NUM_RADICES - 1) * GROUPS_PER_BLOCK + group;
+		 k = (keys_in[i] >> shift & num_radices - 1) * GROUPS_PER_BLOCK + group;
 
 		 // write key-value pairs sequentially by thread in the thread group
 		 for (int j = 0; j < THREADS_PER_GROUP; j++) {
@@ -650,6 +655,7 @@ __global__ void InitCellKernel(uint32_t *cells, uint32_t *objects, Ball* balls, 
 	 //全局内存也要更新
 	 for (int i = threadIdx.x; i < GROUPS_PER_BLOCK * radices_choice_num; i += blockDim.x) 
 	 {
+		 
 		 //i是按照组存储的radix信息---每组共享一组内存
 		 //radices是全局的，所有组都有,大小是256*每个block组个数*block个数
 		 int block_num = i / GROUPS_PER_BLOCK * NUM_BLOCKS + blockIdx.x;
@@ -688,8 +694,8 @@ void cudaSortCells(uint32_t *cells, uint32_t *objects, uint32_t *cells_temp, uin
 			PADDED_GROUPS * sizeof(uint32_t) >> > (
 				radices, radix_sums);
 		RadixOrderKernel << <NUM_BLOCKS, GROUPS_PER_BLOCK * THREADS_PER_GROUP,
-			NUM_RADICES * sizeof(uint32_t) + GROUPS_PER_BLOCK *
-			NUM_RADICES * sizeof(uint32_t) >> > (
+			num_radices * sizeof(uint32_t) + GROUPS_PER_BLOCK *
+			num_radices * sizeof(uint32_t) >> > (
 				cells, objects, cells_temp, objects_temp, radices, radix_sums,
 				N * 8, cells_per_group, i);
 
@@ -743,12 +749,36 @@ void HandleCollisionGrid(Ball* balls, float XRange, float ZRange, float Height,
 	num_cells_occupied = InitCells(cells_gpu, objects_gpu, balls, N,
 		XRange, ZRange, Height, GridSize, GridX, GridY, GridZ,
 		temp_gpu, num_blocks, threads_per_block);
-	/*cudaSortCells(d_cells, d_objects, d_cells_temp, d_objects_temp, d_radices,
-		d_radix_sums, num_objects);*/
+
+	cudaDeviceSynchronize();
+	uint32_t *kebab1 = (uint32_t*)malloc(cell_size);
+	uint32_t *kebab2 = (uint32_t*)malloc(cell_size);
+
+	cudaMemcpy((void*)kebab1, (void*)cells_gpu, cell_size, cudaMemcpyDeviceToHost);
+	cudaMemcpy((void*)kebab2, (void*)objects_gpu, cell_size, cudaMemcpyDeviceToHost);
+
+	for (int i = 0; i < N * 8; i++)
+	{
+		int type1 = kebab1[i] & 1;
+		int z = (kebab1[i] >> 1) & 31;
+		int y = (kebab1[i] >> 9) & 31;
+		int x = (kebab1[i] >> 17) & 31;
+		int type2 = 1 - (kebab2[i] & 1);
+		int id = (kebab2[i] >> 1) & 7;
+		printf(("x = %d, y = %d, z = %d, type1 = %d, type2 = %d, id = %d\n"), x, y, z, type1, type2, id);
+	}
+	free(kebab1);
+	free(kebab2);
+
+	cudaSortCells(cells_gpu, objects_gpu, cells_gpu_temp, objects_gpu_temp, radices_gpu,
+		radix_sums_gpu, cell_size);
 	/*num_collisions = cudaCellCollide(d_cells, d_objects, d_positions,
 		d_velocities, d_dims, num_objects,
 		num_cells, d_temp, &num_tests, num_blocks,
 		threads_per_block);*/
+
+
+
 
 	cudaFree(temp_gpu);
 	cudaFree(cells_gpu);
