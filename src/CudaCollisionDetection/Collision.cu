@@ -465,249 +465,60 @@ __global__ void InitCellKernel(uint32_t *cells, uint32_t *objects, Ball* balls, 
 
 
 
-
- __global__ void RadixOrderKernel(uint32_t *keys_in, uint32_t *values_in,
-	 uint32_t *keys_out, uint32_t *values_out,
-	 uint32_t *radices, uint32_t *radix_sums,
-	 unsigned int n, unsigned int cells_per_group,
-	 int shift) 
+ __global__ void GetRadixSum(uint32_t *cells, uint32_t *radix_sums, int N, int shift)
  {
-	 int num_radices = 1 << RADIX_LENGTH;
-	 extern __shared__ uint32_t s[];
-	 uint32_t *t = s + num_radices;
-	 int group = threadIdx.x / THREADS_PER_GROUP;
-	 int group_start = (blockIdx.x * GROUPS_PER_BLOCK + group) * cells_per_group;
-	 int group_end = group_start + cells_per_group;
-	 uint32_t k;
+	 // 获取全局索引
+	 int index = threadIdx.x + blockIdx.x * blockDim.x;
+	 // 步长
+	 int stride = blockDim.x * gridDim.x;
 
-	 // initialize shared memory
-	 for (int i = threadIdx.x; i < num_radices; i += blockDim.x) 
+	 int num_indices = 1 << RADIX_LENGTH;
+	 for (int i = index; i < num_indices; i++)
 	 {
-		 s[i] = radix_sums[i];
+		 radix_sums[i] = 0;
+	 }
+	 __syncthreads();
 
-		 // copy the last element in each prefix-sum to a separate array
-		 if (!((i + 1) % (num_radices / NUM_BLOCKS))) 
+
+
+	 for (int i = index; i < N; i += stride)
+	 {
+		 for (int j = 0; j < blockDim.x; j++)
 		 {
-			 t[i / (num_radices / NUM_BLOCKS)] = s[i];
-		 }
-	 }
-
-	 __syncthreads();
-
-	 // add padding to array for prefix-sum
-	 for (int i = threadIdx.x + NUM_BLOCKS; i < PADDED_BLOCKS; i += blockDim.x) {
-		 t[i] = 0;
-	 }
-
-	 __syncthreads();
-
-	 // calculate prefix-sum on radix counters
-	 PrefixSum(t, PADDED_BLOCKS);
-	 __syncthreads();
-
-	 // add offsets to prefix-sum values
-	 for (int i = threadIdx.x; i < num_radices; i += blockDim.x)
-	 {
-		 s[i] += t[i / (num_radices / NUM_BLOCKS)];
-	 }
-
-	 __syncthreads();
-
-	 // add offsets to radix counters
-	 for (int i = threadIdx.x; i < GROUPS_PER_BLOCK * num_radices; i += blockDim.x)
-	 {
-		 t[i] = radices[(i / GROUPS_PER_BLOCK * NUM_BLOCKS + blockIdx.x) *
-			 GROUPS_PER_BLOCK + i % GROUPS_PER_BLOCK] + s[i / GROUPS_PER_BLOCK];
-	 }
-
-	 __syncthreads();
-
-	 // rearrange key-value pairs
-	 for (int i = group_start + threadIdx.x % THREADS_PER_GROUP; i < group_end &&
-		 i < n; i += THREADS_PER_GROUP) {
-		 // need only avoid bank conflicts by group
-		 k = (keys_in[i] >> shift & num_radices - 1) * GROUPS_PER_BLOCK + group;
-
-		 // write key-value pairs sequentially by thread in the thread group
-		 for (int j = 0; j < THREADS_PER_GROUP; j++) {
-			 if (threadIdx.x % THREADS_PER_GROUP == j) {
-				 keys_out[t[k]] = keys_in[i];
-				 values_out[t[k]] = values_in[i];
-				 t[k]++;
+			 if (threadIdx.x % blockDim.x == j)
+			 {
+				 int current_radix_num = (cells[i] >> shift) & (num_indices - 1);
+				 radix_sums[current_radix_num] ++;
 			 }
 		 }
+
 	 }
- }
-
- /*
-   描述：求前缀和，更新radix_sums
-   参数：之前并行算出的radices，要更新的结果
-   返回：radix_sums计算
-*/
- __global__ void RadixSumKernel(uint32_t *radices, uint32_t *radix_sums) 
- {
-	 //长度为256的求和结果
-	 extern __shared__ uint32_t shared_radix[];
-	 uint32_t total;
-	 uint32_t left = 0;
-	 int num_radices = 1 << RADIX_LENGTH;
-	 uint32_t *radix = radices + blockIdx.x * num_radices * GROUPS_PER_BLOCK;
-
-	 for (int j = 0; j < num_radices / NUM_BLOCKS; j++)
-	 {
-		 //把当前block的radix写入共享内存
-		 for (int i = threadIdx.x; i < NUM_BLOCKS * GROUPS_PER_BLOCK; i += blockDim.x) 
-		 {
-			 shared_radix[i] = radix[i];
-		 }
-
-		 __syncthreads();
-
-		 //增加padding到256，保证效率
-		 for (int i = threadIdx.x + NUM_BLOCKS * GROUPS_PER_BLOCK; i < PADDED_GROUPS; i += blockDim.x) 
-		 {
-			 shared_radix[i] = 0;
-		 }
-
-		 __syncthreads();
-
-		 //total设置成上一轮的结果
-		 //只能一个线程干这件事
-		 if (!threadIdx.x) 
-		 {
-			 total = shared_radix[PADDED_GROUPS - 1];
-		 }
-
-		 //求s的前缀和，s[i]代表0-i个元素的和
-		 PrefixSum(shared_radix, PADDED_GROUPS);
-		 __syncthreads();
-
-		 //拷贝回radix数组，目前radix的值变成前缀和了
-		 for (int i = threadIdx.x; i < NUM_BLOCKS * GROUPS_PER_BLOCK; i += blockDim.x) 
-		 {
-			 radix[i] = shared_radix[i];
-		 }
-
-		 __syncthreads();
-
-		 //1.total继续累加，total因此等于每一轮前缀和之和
-		 //只能一个线程干这件事
-		 if (!threadIdx.x) 
-		 {
-			 total += shared_radix[PADDED_GROUPS - 1];
-
-			 //加到最终前缀和上去，最终前缀和长度只有256
-			 radix_sums[blockIdx.x * num_radices / NUM_BLOCKS + j] = left;
-			 total += left;
-			 left = total;
-		 }
-
-		 //更新radix数组到下一位
-		 radix += NUM_BLOCKS * GROUPS_PER_BLOCK;
-	 }
- }
-
- /*
-	描述：初始化radix数组
-	参数：cells数组，全局radices，cells个数（8N），每组cells个数，偏移量
-	返回：更新radices
- */
- __global__ void RadixTabulateKernel(uint32_t *cells, uint32_t *radices, int num_cells, unsigned int cells_per_group, int shift) 
- {
-	 //每个block共享一份内存，大小是radix个数（256） * block的group大小
-	 //一个group处理若干cells
-	 extern __shared__ uint32_t shared_radix_by_blocks[];
-
-	 //求组号和每组开始、结束的cell编号
-	 int group = threadIdx.x / THREADS_PER_GROUP;
-	 int group_start = (blockIdx.x * GROUPS_PER_BLOCK + group) * cells_per_group;
-	 int group_end = group_start + cells_per_group;
-
-
-	 int radices_choice_num = 1 << RADIX_LENGTH;
-	 //初始化共享内存
-	 for (int i = threadIdx.x; i < GROUPS_PER_BLOCK * radices_choice_num; i += blockDim.x) 
-	 {
-		 shared_radix_by_blocks[i] = 0;
-	 }
-
 	 __syncthreads();
+}
 
-	 for (int i = group_start + threadIdx.x % THREADS_PER_GROUP; i < group_end && i < num_cells; i += THREADS_PER_GROUP) 
-	 {
-		 //求当前元素的radix
-		 uint32_t current_item_radix = (cells[i] >> shift) & (radices_choice_num - 1);
 
-		 //映射到对应的group
-		 uint32_t current_item_group_radix = current_item_radix * GROUPS_PER_BLOCK + group;
 
-		 //保证radix计算是串行的，防止冲突
-		 for (int j = 0; j < THREADS_PER_GROUP; j++) 
-		 {
-			 if (threadIdx.x % THREADS_PER_GROUP == j) {
-				 shared_radix_by_blocks[current_item_group_radix]++;
-			 }
-		 }
-	 }
-
-	 __syncthreads();
-
-	 //全局内存也要更新
-	 for (int i = threadIdx.x; i < GROUPS_PER_BLOCK * radices_choice_num; i += blockDim.x) 
-	 {
-		 
-		 //i是按照组存储的radix信息---每组共享一组内存
-		 //radices是全局的，所有组都有,大小是256*每个block组个数*block个数
-		 int block_num = i / GROUPS_PER_BLOCK * NUM_BLOCKS + blockIdx.x;
-		 int radix_by_block = block_num * GROUPS_PER_BLOCK + i % GROUPS_PER_BLOCK;
-		 radices[radix_by_block] = shared_radix_by_blocks[i];
-	 }
- }
-
-	 /**
- * @brief Radix sorts an array of objects using occupations as keys.
- * @param cells the input array of cells.
- * @param objects the input array of objects.
- * @param cells_temp sorted array of cells.
- * @param objects_temp array of objects sorted by corresponding cells.
- * @param radices working array to hold radix data.
- * @param radix_sums working array to hold radix prefix sums.
- * @param num_objects the number of objects included.
- */
-void cudaSortCells(uint32_t *cells, uint32_t *objects, uint32_t *cells_temp, uint32_t *objects_temp, 
-	uint32_t *radices, uint32_t *radix_sums, int N) 
+void SortCells(uint32_t *cells, uint32_t *objects, uint32_t *cells_temp, uint32_t *objects_temp,
+	uint32_t *radix_sums, int N, unsigned int num_blocks, unsigned int threads_per_block)
 {
-	//一个线程组处理多少个cell
-	unsigned int cells_per_group = (N * 8 - 1) / NUM_BLOCKS / GROUPS_PER_BLOCK + 1;
-
-
-	uint32_t *cells_swap;
-	uint32_t *objects_swap;
-	int num_radices = 1 << RADIX_LENGTH;
-	//每次排序8个bit
 	for (int i = 0; i < 32; i += RADIX_LENGTH)
 	{
-		RadixTabulateKernel << <NUM_BLOCKS, GROUPS_PER_BLOCK * THREADS_PER_GROUP, 
-			GROUPS_PER_BLOCK * num_radices * sizeof(uint32_t) >> > (
-				cells, radices, N * 8, cells_per_group, i);
-		RadixSumKernel << <NUM_BLOCKS, GROUPS_PER_BLOCK * THREADS_PER_GROUP,
-			PADDED_GROUPS * sizeof(uint32_t) >> > (
-				radices, radix_sums);
-		RadixOrderKernel << <NUM_BLOCKS, GROUPS_PER_BLOCK * THREADS_PER_GROUP,
-			num_radices * sizeof(uint32_t) + GROUPS_PER_BLOCK *
-			num_radices * sizeof(uint32_t) >> > (
-				cells, objects, cells_temp, objects_temp, radices, radix_sums,
-				N * 8, cells_per_group, i);
+		GetRadixSum <<< num_blocks, threads_per_block >>> (cells, radix_sums, N, i);
 
-		// cells sorted up to this bit are in cells_temp; swap for the next pass
-		cells_swap = cells;
-		cells = cells_temp;
-		cells_temp = cells_swap;
-		objects_swap = objects;
-		objects = objects_temp;
-		objects_temp = objects_swap;
+		uint32_t *radix_sums_result = (uint32_t*)malloc(256 * sizeof(uint32_t));
+		cudaDeviceSynchronize();
+		cudaMemcpy((void*)radix_sums_result, (void*)radix_sums, 256 * sizeof(uint32_t), cudaMemcpyDeviceToHost);
+		int sum = 0;
+		for (int j = 0; j < 256; j++)
+		{
+			sum += radix_sums_result[j];
+		}
+		printf("%d", sum);
+		int kk = 0;
 	}
 }
+
+
 
 /*
 描述：空间划分算法处理碰撞检测和速度更新（主函数）
@@ -732,7 +543,6 @@ void HandleCollisionGrid(Ball* balls, float XRange, float ZRange, float Height,
 	uint32_t *objects_gpu;
 	uint32_t *objects_gpu_temp;
 	unsigned int *temp_gpu;
-	uint32_t *radices_gpu;
 	uint32_t *radix_sums_gpu;
 
 	int num_radices = 1 << RADIX_LENGTH;
@@ -742,21 +552,32 @@ void HandleCollisionGrid(Ball* balls, float XRange, float ZRange, float Height,
 	cudaMalloc((void **)&objects_gpu, cell_size);
 	cudaMalloc((void **)&objects_gpu_temp, cell_size);
 	cudaMalloc((void **)&temp_gpu, 2 * sizeof(unsigned int));
-	cudaMalloc((void **)&radices_gpu, NUM_BLOCKS * GROUPS_PER_BLOCK * num_radices * sizeof(uint32_t));
 	cudaMalloc((void **)&radix_sums_gpu, num_radices * sizeof(uint32_t));
 
+
+	
 	//主函数
 	num_cells_occupied = InitCells(cells_gpu, objects_gpu, balls, N,
 		XRange, ZRange, Height, GridSize, GridX, GridY, GridZ,
 		temp_gpu, num_blocks, threads_per_block);
 
+
+
+
+	SortCells(cells_gpu, objects_gpu, cells_gpu_temp, objects_gpu_temp, radix_sums_gpu, 
+		8 * N, num_blocks, threads_per_block);
+	
+
+	/*num_collisions = cudaCellCollide(d_cells, d_objects, d_positions,
+		d_velocities, d_dims, num_objects,
+		num_cells, d_temp, &num_tests, num_blocks,
+		threads_per_block);*/
+	
 	cudaDeviceSynchronize();
 	uint32_t *kebab1 = (uint32_t*)malloc(cell_size);
 	uint32_t *kebab2 = (uint32_t*)malloc(cell_size);
-
 	cudaMemcpy((void*)kebab1, (void*)cells_gpu, cell_size, cudaMemcpyDeviceToHost);
 	cudaMemcpy((void*)kebab2, (void*)objects_gpu, cell_size, cudaMemcpyDeviceToHost);
-
 	for (int i = 0; i < N * 8; i++)
 	{
 		int type1 = kebab1[i] & 1;
@@ -769,23 +590,13 @@ void HandleCollisionGrid(Ball* balls, float XRange, float ZRange, float Height,
 	}
 	free(kebab1);
 	free(kebab2);
-
-	cudaSortCells(cells_gpu, objects_gpu, cells_gpu_temp, objects_gpu_temp, radices_gpu,
-		radix_sums_gpu, cell_size);
-	/*num_collisions = cudaCellCollide(d_cells, d_objects, d_positions,
-		d_velocities, d_dims, num_objects,
-		num_cells, d_temp, &num_tests, num_blocks,
-		threads_per_block);*/
-
-
-
+	
 
 	cudaFree(temp_gpu);
 	cudaFree(cells_gpu);
 	cudaFree(cells_gpu_temp);
 	cudaFree(objects_gpu);
 	cudaFree(objects_gpu_temp);
-	cudaFree(radices_gpu);
 	cudaFree(radix_sums_gpu);
 }
 
@@ -799,7 +610,7 @@ void UpdateBallsGridGPU(Ball* balls, float TimeOnce, float XRange, float ZRange,
 	float GridSize, int GridX, int GridY, int GridZ, int N)
 {
 	//设置，计算需要多少block和thread
-	unsigned int num_blocks = 100;
+	unsigned int num_blocks = 1;
 	unsigned int threads_per_block = 512;
 	unsigned int object_size = (N - 1) / threads_per_block + 1;
 	if (object_size < num_blocks) {
