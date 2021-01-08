@@ -464,15 +464,19 @@ __global__ void InitCellKernel(uint32_t *cells, uint32_t *objects, Ball* balls, 
  }
 
 
-
+/*
+描述：对cells求前缀和
+参数：cells，待更新前缀和，N个cell，偏移量
+返回：更新前缀和
+*/
  __global__ void GetRadixSum(uint32_t *cells, uint32_t *radix_sums, int N, int shift)
  {
-	 // 获取全局索引
 	 int index = threadIdx.x + blockIdx.x * blockDim.x;
-	 // 步长
 	 int stride = blockDim.x * gridDim.x;
-
 	 int num_indices = 1 << RADIX_LENGTH;
+
+
+	 //初始化
 	 for (int i = index; i < num_indices; i++)
 	 {
 		 radix_sums[i] = 0;
@@ -480,9 +484,10 @@ __global__ void InitCellKernel(uint32_t *cells, uint32_t *objects, Ball* balls, 
 	 __syncthreads();
 
 
-
+	 //求和
 	 for (int i = index; i < N; i += stride)
 	 {
+		 //非常重要，不这样做无法有效求和
 		 for (int j = 0; j < blockDim.x; j++)
 		 {
 			 if (threadIdx.x % blockDim.x == j)
@@ -494,27 +499,64 @@ __global__ void InitCellKernel(uint32_t *cells, uint32_t *objects, Ball* balls, 
 
 	 }
 	 __syncthreads();
+	 //求前缀和
+	 PrefixSum(radix_sums, num_indices);
+	 __syncthreads();
 }
 
+ /*
+ 描述：重新分配元素
+ 参数：cells，object数组，他们待更新的分配结果temp，前缀和数组，N个元素，偏移量，每个线程处理几个cell
+ 返回：更新前缀和
+ */
+ __global__ void RearrangeCell(uint32_t *cells, uint32_t *objects, uint32_t *cells_temp, uint32_t *objects_temp, 
+	 uint32_t *radix_sums, int N, int shift)
+ {
+	 int index = threadIdx.x + blockIdx.x * blockDim.x;
+	 int stride = blockDim.x * gridDim.x;
+	 int num_indices = 1 << RADIX_LENGTH;
+
+	 if (index != 0) return;
+	 //分配
+	 for (int i = 0; i < N; i ++ )
+	 {
+		int current_radix_num = (cells[i] >> shift) & (num_indices - 1);
+		cells_temp[radix_sums[current_radix_num]] = cells[i];
+		objects_temp[radix_sums[current_radix_num]] = objects[i];
+		radix_sums[current_radix_num] ++;
+	 }
+ }
 
 
+/*
+描述：对cell，object做基数排序
+参数：cell，object数组；他们的temp形式用于排序；待求的前缀和数组；cell个数；线程情况
+返回：无，但是更新cell，object数组
+*/
 void SortCells(uint32_t *cells, uint32_t *objects, uint32_t *cells_temp, uint32_t *objects_temp,
 	uint32_t *radix_sums, int N, unsigned int num_blocks, unsigned int threads_per_block)
 {
+	uint32_t *cells_swap;
+	uint32_t *objects_swap;
 	for (int i = 0; i < 32; i += RADIX_LENGTH)
 	{
+		//求前缀和
 		GetRadixSum <<< num_blocks, threads_per_block >>> (cells, radix_sums, N, i);
 
-		uint32_t *radix_sums_result = (uint32_t*)malloc(256 * sizeof(uint32_t));
-		cudaDeviceSynchronize();
-		cudaMemcpy((void*)radix_sums_result, (void*)radix_sums, 256 * sizeof(uint32_t), cudaMemcpyDeviceToHost);
-		int sum = 0;
-		for (int j = 0; j < 256; j++)
-		{
-			sum += radix_sums_result[j];
-		}
-		printf("%d", sum);
-		int kk = 0;
+		//用前缀和重新分配
+		RearrangeCell << < num_blocks, threads_per_block >> > (cells, objects, cells_temp, objects_temp,
+			radix_sums, N, i);
+		
+		//交换原始和temp
+		cells_swap = cells;
+		cells = cells_temp;
+		cells_temp = cells_swap;
+		objects_swap = objects;
+		objects = objects_temp;
+		objects_temp = objects_swap;
+		
+
+		
 	}
 }
 
@@ -556,14 +598,12 @@ void HandleCollisionGrid(Ball* balls, float XRange, float ZRange, float Height,
 
 
 	
-	//主函数
+	//初始化cell和object
 	num_cells_occupied = InitCells(cells_gpu, objects_gpu, balls, N,
 		XRange, ZRange, Height, GridSize, GridX, GridY, GridZ,
 		temp_gpu, num_blocks, threads_per_block);
 
-
-
-
+	//基数排序
 	SortCells(cells_gpu, objects_gpu, cells_gpu_temp, objects_gpu_temp, radix_sums_gpu, 
 		8 * N, num_blocks, threads_per_block);
 	
@@ -573,23 +613,7 @@ void HandleCollisionGrid(Ball* balls, float XRange, float ZRange, float Height,
 		num_cells, d_temp, &num_tests, num_blocks,
 		threads_per_block);*/
 	
-	cudaDeviceSynchronize();
-	uint32_t *kebab1 = (uint32_t*)malloc(cell_size);
-	uint32_t *kebab2 = (uint32_t*)malloc(cell_size);
-	cudaMemcpy((void*)kebab1, (void*)cells_gpu, cell_size, cudaMemcpyDeviceToHost);
-	cudaMemcpy((void*)kebab2, (void*)objects_gpu, cell_size, cudaMemcpyDeviceToHost);
-	for (int i = 0; i < N * 8; i++)
-	{
-		int type1 = kebab1[i] & 1;
-		int z = (kebab1[i] >> 1) & 31;
-		int y = (kebab1[i] >> 9) & 31;
-		int x = (kebab1[i] >> 17) & 31;
-		int type2 = 1 - (kebab2[i] & 1);
-		int id = (kebab2[i] >> 1) & 7;
-		printf(("x = %d, y = %d, z = %d, type1 = %d, type2 = %d, id = %d\n"), x, y, z, type1, type2, id);
-	}
-	free(kebab1);
-	free(kebab2);
+
 	
 
 	cudaFree(temp_gpu);
