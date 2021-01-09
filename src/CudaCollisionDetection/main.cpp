@@ -16,8 +16,8 @@ using namespace std;
 const int WindowSizeX = 800, WindowSizeY = 600, WindowPlaceX = 100, WindowPlaceY = 100;
 const char WindowName[] = "MyScene";
 const float TimeOnce = 0.02; //刷新时间
-const int BallNum = 2;
-const float XRange = 9, ZRange = 9, Height = 18, MaxRadius = 1; //场景的X,Y,Z范围（-X,X),(0,H),(-Z,Z)
+const int BallNum = 4;
+const float XRange = 18, ZRange = 18, Height = 36, MaxRadius = 1; //场景的X,Y,Z范围（-X,X),(0,H),(-Z,Z)
 int GlobalMode = -1;
 
 //光照，相机
