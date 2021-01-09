@@ -231,48 +231,6 @@ void UpdateBallsNaiveGPU(Ball* balls, float TimeOnce, float XRange, float ZRange
 }
 
 
-//空间划分用的工具函数
-/*
-描述：计算前i和的算法
-参数：原始数组，个数n
-返回：原始数组变成前i个和数组
-*/
-__device__ void PrefixSum(uint32_t *values, unsigned int n) {
-	int offset = 1;
-	int a;
-	uint32_t temp;
-
-	// upsweep
-	for (int d = n / 2; d; d /= 2) {
-		__syncthreads();
-
-		if (threadIdx.x < d) {
-			a = (threadIdx.x * 2 + 1) * offset - 1;
-			values[a + offset] += values[a];
-		}
-
-		offset *= 2;
-	}
-
-	if (!threadIdx.x) {
-		values[n - 1] = 0;
-	}
-
-	// downsweep
-	for (int d = 1; d < n; d *= 2) {
-		__syncthreads();
-		offset /= 2;
-
-		if (threadIdx.x < d) {
-			a = (threadIdx.x * 2 + 1) * offset - 1;
-			temp = values[a];
-			values[a] = values[a + offset];
-			values[a + offset] += temp;
-		}
-	}
-}
-
-
 //空间划分算法相关函数
 /*
 描述：初始化cells，objects数组，前者记录物体所在的格子信息（格子x，y，z的id，home还是phantom），后者记录物体id和home/phantom
@@ -422,6 +380,46 @@ void InitCells(uint32_t *cells, uint32_t *objects, Ball* balls, int N,
 
 
 /*
+描述：计算前i和的算法
+参数：原始数组，个数n
+返回：原始数组变成前i个和数组
+*/
+__device__ void PrefixSum(uint32_t *values, unsigned int n) {
+	int offset = 1;
+	int a;
+	uint32_t temp;
+
+	// upsweep
+	for (int d = n / 2; d; d /= 2) {
+		__syncthreads();
+
+		if (threadIdx.x < d) {
+			a = (threadIdx.x * 2 + 1) * offset - 1;
+			values[a + offset] += values[a];
+		}
+
+		offset *= 2;
+	}
+
+	if (!threadIdx.x) {
+		values[n - 1] = 0;
+	}
+
+	// downsweep
+	for (int d = 1; d < n; d *= 2) {
+		__syncthreads();
+		offset /= 2;
+
+		if (threadIdx.x < d) {
+			a = (threadIdx.x * 2 + 1) * offset - 1;
+			temp = values[a];
+			values[a] = values[a + offset];
+			values[a + offset] += temp;
+		}
+	}
+}
+
+/*
 描述：对cells求前缀和
 参数：cells，待更新前缀和，N个cell，偏移量
 返回：更新前缀和
@@ -549,8 +547,115 @@ void SortCells(uint32_t *cells, uint32_t *objects, uint32_t *cells_temp, uint32_
 	GetCellIndex << < num_blocks, threads_per_block >> > (cells, N, indices, num_indices);
 }
 
+/*
+描述：cuda碰撞检测和处理函数
+参数：cell和object数组，ball数组，球和cell的个数，index数组和个数，线程信息，场景的各种限制和格子信息
+返回：无，但是进行碰撞检测和处理
+*/
+__global__ void HandleCollisionCuda(uint32_t *cells, uint32_t *objects, Ball* balls, int num_balls, int num_cells,
+	uint32_t* indices, uint32_t num_indices, unsigned int group_per_thread,
+	float XRange, float ZRange, float Height, float GridSize, int GridX, int GridY, int GridZ)
+{
+	int index = threadIdx.x + blockIdx.x * blockDim.x;
+	for (int group_num = 0; group_num < group_per_thread; group_num++)
+	{
+		//判断是否越界，找到处理的start，end
+		int cell_id = index * group_per_thread + group_num;
+		if (cell_id >= num_indices)
+		{
+			break;
+		}
+		int end = indices[cell_id];
+		int start = 0;
+		if (cell_id == 0)
+		{
+			start = 0;
+		}
+		else
+		{
+			start = indices[cell_id - 1];
+		}
+
+		//不考虑空格子
+		if (cells[start] == UINT32_MAX) break;
+
+		//找其中home的个数
+		int home_num = 0;
+		for (int i = start; i < end; i++)
+		{
+			int type = cells[i] & 1;
+			if (type == HOME_CELL)
+			{
+				home_num++;
+			}
+			else
+			{
+				break;
+			}
+		}
+
+		//遍历碰撞检测
+		for (int i = start; i < start + home_num; i++)
+		{
+			if (cells[i] == UINT32_MAX) break;
+			int ball_i = (objects[i] >> 1) & 65535;
+			
+			for (int j = i + 1; j < end; j++)
+			{
+				if (cells[j] == UINT32_MAX) break;
+				int ball_j = (objects[j] >> 1) & 65535;
+
+				//2个home，直接碰撞检测
+				if (j < start + home_num)
+				{
+					if (JudgeCollision(balls[ball_i], balls[ball_j]))
+					{
+						ChangeSpeed(balls[ball_i], balls[ball_j]);
+					}
+				}
+
+				//home和phantom，需要判重
+				else
+				{
+					int home_i = (cells[i] >> 1) & ((1 << 24) - 1);
+					int j_x = (balls[ball_j].CurrentPlace.x + XRange) / GridSize;
+					int j_y = balls[ball_j].CurrentPlace.y / GridSize;
+					int j_z = (balls[ball_j].CurrentPlace.z + ZRange) / GridSize;
+					int home_j = j_x << 16 | j_y << 8 | j_z;
+
+					//只有这样才可以
+					if(home_i < home_j)
+					{
+						if (JudgeCollision(balls[ball_i], balls[ball_j]))
+						{
+							ChangeSpeed(balls[ball_i], balls[ball_j]);
+						}
+					}
+				}
+			}
+		}
+
+	}
 
 
+
+}
+
+/*
+描述：碰撞检测和处理函数
+参数：cell和object数组，ball数组，球和cell的个数，index数组和个数，线程信息，场景的各种限制和格子信息
+返回：无，但是进行碰撞检测和处理
+*/
+void HandleCollision(uint32_t *cells, uint32_t *objects, Ball* balls, int num_balls, int num_cells,
+	uint32_t* indices, uint32_t num_indices, unsigned int num_blocks, unsigned int threads_per_block,
+	float XRange, float ZRange, float Height, float GridSize, int GridX, int GridY, int GridZ)
+{
+	unsigned int threads_total = num_blocks * threads_per_block;
+	unsigned int group_per_thread = num_indices / threads_total + 1;
+	HandleCollisionCuda << <num_blocks, threads_per_block >> > (cells, objects, balls, num_balls, num_cells,
+		indices, num_indices, group_per_thread,
+		XRange, ZRange, Height, GridSize, GridX, GridY, GridZ);
+}
 
 /*
 描述：空间划分算法处理碰撞检测和速度更新（主函数）
@@ -594,40 +699,15 @@ void HandleCollisionGrid(Ball* balls, float XRange, float ZRange, float Height,
 	SortCells(cells_gpu, objects_gpu, cells_gpu_temp, objects_gpu_temp, radix_sums_gpu, 
 		8 * N, indices_gpu, indices_num_gpu, num_blocks, threads_per_block);
 	
-	/*
 	cudaDeviceSynchronize();
-	uint32_t *kebab1 = (uint32_t*)malloc(cell_size);
-	uint32_t *kebab2 = (uint32_t*)malloc(cell_size);
-	uint32_t *kebab3 = (uint32_t*)malloc(cell_size);
-	uint32_t *kebab4 = (uint32_t*)malloc(sizeof(uint32_t));
-	cudaMemcpy((void*)kebab1, (void*)cells_gpu, cell_size, cudaMemcpyDeviceToHost);
-	cudaMemcpy((void*)kebab2, (void*)objects_gpu, cell_size, cudaMemcpyDeviceToHost);
-	cudaMemcpy((void*)kebab3, (void*)indices_gpu, cell_size, cudaMemcpyDeviceToHost);
-	cudaMemcpy((void*)kebab4, (void*)indices_num_gpu, sizeof(uint32_t), cudaMemcpyDeviceToHost);
-	for (int i = 0; i < N * 8; i++)
-	{
-		int type1 = kebab1[i] & 1;
-		int z = (kebab1[i] >> 1) & 31;
-		int y = (kebab1[i] >> 9) & 31;
-		int x = (kebab1[i] >> 17) & 31;
-		int type2 = 1 - (kebab2[i] & 1);
-		int id = (kebab2[i] >> 1) & 7;
-		printf(("x = %d, y = %d, z = %d, type1 = %d, type2 = %d, id = %d\n"), x, y, z, type1, type2, id);
-	}
-	printf("indices num: %d\n", kebab4[0]);
-	for (int i = 0; i < kebab4[0]; i++)
-	{
-		printf("%d ", kebab3[i]);
-	}
-	free(kebab1);
-	*/
 
-	/*num_collisions = cudaCellCollide(d_cells, d_objects, d_positions,
-		d_velocities, d_dims, num_objects,
-		num_cells, d_temp, &num_tests, num_blocks,
-		threads_per_block);*/
+
+	uint32_t indices_num;
+	cudaMemcpy((void*)&indices_num, (void*)indices_num_gpu, sizeof(uint32_t), cudaMemcpyDeviceToHost);
 	
-
+	HandleCollision(cells_gpu, objects_gpu, balls, N, 8 * N, indices_gpu, indices_num,
+		num_blocks, threads_per_block,
+		XRange, ZRange, Height, GridSize, GridX, GridY, GridZ);
 	
 
 	cudaFree(cells_gpu);
@@ -649,7 +729,7 @@ void UpdateBallsGridGPU(Ball* balls, float TimeOnce, float XRange, float ZRange,
 	float GridSize, int GridX, int GridY, int GridZ, int N)
 {
 	//设置，计算需要多少block和thread
-	unsigned int num_blocks = 1;
+	unsigned int num_blocks = 128;
 	unsigned int threads_per_block = 512;
 	unsigned int object_size = (N - 1) / threads_per_block + 1;
 	if (object_size < num_blocks) {

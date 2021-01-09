@@ -278,29 +278,29 @@ void InitSettings()
 	{
 		int mode;
 		cout << "请输出碰撞检测算法类型" <<endl;
-		cout << "0：串行，无加速碰撞检测" << endl;
-		cout << "1：并行，无加速碰撞检测" << endl;
-		cout << "2：串行，空间划分加速碰撞检测" << endl;
-		cout << "3：并行，空间划分加速碰撞检测" << endl;
+		cout << "0：串行，循环碰撞检测" << endl;
+		cout << "1：并行，循环碰撞检测" << endl;
+		cout << "2：串行，空间划分碰撞检测" << endl;
+		cout << "3：并行，空间划分碰撞检测" << endl;
 		cin >> mode;
 		if (mode >= 0 && mode <= 3)
 		{
 			cout << "当前模式为：";
 			if (mode == NAIVE_CPU)
 			{
-				cout << "0：串行，无加速碰撞检测" << endl;
+				cout << "0：串行，循环碰撞检测" << endl;
 			}
 			else if (mode == NAIVE_GPU)
 			{
-				cout << "1：并行，无加速碰撞检测" << endl;
+				cout << "1：并行，循环碰撞检测" << endl;
 			}
 			else if (mode == FAST_CPU)
 			{
-				cout << "2：串行，八叉树加速碰撞检测" << endl;
+				cout << "2：串行，空间划分碰撞检测" << endl;
 			}
 			else if (mode == FAST_GPU)
 			{
-				cout << "3：并行，八叉树加速碰撞检测" << endl;
+				cout << "3：并行，空间划分碰撞检测" << endl;
 			}
 			GlobalMode = mode;
 			break;
