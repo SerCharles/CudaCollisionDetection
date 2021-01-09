@@ -384,16 +384,19 @@ void InitCells(uint32_t *cells, uint32_t *objects, Ball* balls, int N,
 参数：原始数组，个数n
 返回：原始数组变成前i个和数组
 */
-__device__ void PrefixSum(uint32_t *values, unsigned int n) {
+__device__ void PrefixSum(uint32_t *values, unsigned int n) 
+{
 	int offset = 1;
 	int a;
 	uint32_t temp;
 
-	// upsweep
-	for (int d = n / 2; d; d /= 2) {
+	//reduction
+	for (int d = n / 2; d; d /= 2) 
+	{
 		__syncthreads();
 
-		if (threadIdx.x < d) {
+		if (threadIdx.x < d) 
+		{
 			a = (threadIdx.x * 2 + 1) * offset - 1;
 			values[a + offset] += values[a];
 		}
@@ -401,16 +404,19 @@ __device__ void PrefixSum(uint32_t *values, unsigned int n) {
 		offset *= 2;
 	}
 
-	if (!threadIdx.x) {
+	if (!threadIdx.x) 
+	{
 		values[n - 1] = 0;
 	}
 
-	// downsweep
-	for (int d = 1; d < n; d *= 2) {
+	//reverse
+	for (int d = 1; d < n; d *= 2) 
+	{
 		__syncthreads();
 		offset /= 2;
 
-		if (threadIdx.x < d) {
+		if (threadIdx.x < d) 
+		{
 			a = (threadIdx.x * 2 + 1) * offset - 1;
 			temp = values[a];
 			values[a] = values[a + offset];
