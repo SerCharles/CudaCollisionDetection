@@ -272,41 +272,6 @@ __device__ void PrefixSum(uint32_t *values, unsigned int n) {
 	}
 }
 
-/*
-描述：求和算法
-参数：原始数组，输出
-返回：输出变为和
-*/
-__device__ void dSumReduce(unsigned int *values, unsigned int *out) {
-	// wait for the whole array to be populated
-	__syncthreads();
-
-	// sum by reduction, using half the threads in each subsequent iteration
-	unsigned int threads = blockDim.x;
-	unsigned int half = threads / 2;
-
-	while (half) {
-		if (threadIdx.x < half) {
-			// only keep going if the thread is in the first half threads
-			for (int k = threadIdx.x + half; k < threads; k += half) {
-				values[threadIdx.x] += values[k];
-			}
-
-			threads = half;
-		}
-
-		half /= 2;
-
-		// make sure all the threads are on the same iteration
-		__syncthreads();
-	}
-
-	// only let one thread update the current sum
-	if (!threadIdx.x) {
-		atomicAdd(out, values[0]);
-	}
-}
-
 
 //空间划分算法相关函数
 /*
@@ -315,9 +280,8 @@ __device__ void dSumReduce(unsigned int *values, unsigned int *out) {
 返回：更新cells，objects数组和cell_num
 */
 __global__ void InitCellKernel(uint32_t *cells, uint32_t *objects, Ball* balls, int N,
-	float XRange, float ZRange, float Height, float GridSize, int GridX, int GridY, int GridZ, unsigned int* cell_num) 
+	float XRange, float ZRange, float Height, float GridSize, int GridX, int GridY, int GridZ) 
 {
-	extern __shared__ unsigned int t[];
 	unsigned int count = 0;
 
 	for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < N; i += gridDim.x * blockDim.x)
@@ -441,9 +405,6 @@ __global__ void InitCellKernel(uint32_t *cells, uint32_t *objects, Ball* balls, 
 
 	}
 
-	//计算有物体的格子个数
-	t[threadIdx.x] = count;
-	dSumReduce(t, cell_num);
 }
 
 /*
@@ -451,16 +412,12 @@ __global__ void InitCellKernel(uint32_t *cells, uint32_t *objects, Ball* balls, 
 参数：空的cell，phantom；球列表和个数，还有各种格子信息，线程信息
 返回：更新cells，objects数组和cell_num
  */
- unsigned int InitCells(uint32_t *cells, uint32_t *objects, Ball* balls, int N,
+void InitCells(uint32_t *cells, uint32_t *objects, Ball* balls, int N,
 	 float XRange, float ZRange, float Height, float GridSize, int GridX, int GridY, int GridZ, 
-	 unsigned int* cell_count_temp, unsigned int num_blocks, unsigned int threads_per_block) {
-	 unsigned int cell_count;
-	 cudaMemset(&cell_count, 0, sizeof(unsigned int));
+	 unsigned int num_blocks, unsigned int threads_per_block) {
 	 InitCellKernel << <num_blocks, threads_per_block,
 		 threads_per_block * sizeof(unsigned int) >> > (
-			 cells, objects, balls, N, XRange, ZRange, Height, GridSize, GridX, GridY, GridZ, cell_count_temp);
-	 cudaMemcpy(&cell_count, cell_count_temp, sizeof(unsigned int), cudaMemcpyDeviceToHost);
-	 return cell_count;
+			 cells, objects, balls, N, XRange, ZRange, Height, GridSize, GridX, GridY, GridZ);
  }
 
 
@@ -469,7 +426,7 @@ __global__ void InitCellKernel(uint32_t *cells, uint32_t *objects, Ball* balls, 
 参数：cells，待更新前缀和，N个cell，偏移量
 返回：更新前缀和
 */
- __global__ void GetRadixSum(uint32_t *cells, uint32_t *radix_sums, int N, int shift)
+__global__ void GetRadixSum(uint32_t *cells, uint32_t *radix_sums, int N, int shift)
  {
 	 int index = threadIdx.x + blockIdx.x * blockDim.x;
 	 int stride = blockDim.x * gridDim.x;
@@ -509,32 +466,66 @@ __global__ void InitCellKernel(uint32_t *cells, uint32_t *objects, Ball* balls, 
  参数：cells，object数组，他们待更新的分配结果temp，前缀和数组，N个元素，偏移量，每个线程处理几个cell
  返回：更新前缀和
  */
- __global__ void RearrangeCell(uint32_t *cells, uint32_t *objects, uint32_t *cells_temp, uint32_t *objects_temp, 
+__global__ void RearrangeCell(uint32_t *cells, uint32_t *objects, uint32_t *cells_temp, uint32_t *objects_temp, 
 	 uint32_t *radix_sums, int N, int shift)
  {
 	 int index = threadIdx.x + blockIdx.x * blockDim.x;
 	 int stride = blockDim.x * gridDim.x;
-	 int num_indices = 1 << RADIX_LENGTH;
+	 int num_radices = 1 << RADIX_LENGTH;
 
 	 if (index != 0) return;
 	 //分配
 	 for (int i = 0; i < N; i ++ )
 	 {
-		int current_radix_num = (cells[i] >> shift) & (num_indices - 1);
+		int current_radix_num = (cells[i] >> shift) & (num_radices - 1);
 		cells_temp[radix_sums[current_radix_num]] = cells[i];
 		objects_temp[radix_sums[current_radix_num]] = objects[i];
 		radix_sums[current_radix_num] ++;
 	 }
  }
 
+/*
+描述：获取排序后数组的index（cell变化的位置）
+参数：cell，cell个数N,待更新的indice，待更新的indice个数
+返回：无，但是更新indice数组和indice个数
+*/
+__global__ void GetCellIndex(uint32_t *cells, int N, uint32_t* indices, uint32_t* num_indices)
+{
+	int index = threadIdx.x + blockIdx.x * blockDim.x;
+	int stride = blockDim.x * gridDim.x;
+	//只能串行
+	if (index != 0) return;
+	num_indices[0] = 0;
+	uint32_t mask = (1 << 24) - 1;
+	uint32_t previous = UINT32_MAX;
+	uint32_t current = UINT32_MAX;
+	for (int i = 0; i < N; i++)
+	{
+		current = mask & (cells[i] >> 1);
+		if (previous == UINT32_MAX)
+		{
+			previous = current;
+		}
+		if (previous != current)
+		{
+			indices[num_indices[0]] = i;
+			num_indices[0]++;
+		}
+		previous = current;
+	}
+	indices[num_indices[0]] = N;
+	num_indices[0]++;
+}
+
 
 /*
-描述：对cell，object做基数排序
-参数：cell，object数组；他们的temp形式用于排序；待求的前缀和数组；cell个数；线程情况
-返回：无，但是更新cell，object数组
+描述：对cell，object做基数排序，并且获取index（cell变化的位置）
+参数：cell，object数组；他们的temp形式用于排序；待求的前缀和数组；cell个数；待求的index数组和长度；线程情况
+返回：无，但是更新cell，object数组，还有index数组和其长度
 */
 void SortCells(uint32_t *cells, uint32_t *objects, uint32_t *cells_temp, uint32_t *objects_temp,
-	uint32_t *radix_sums, int N, unsigned int num_blocks, unsigned int threads_per_block)
+	uint32_t *radix_sums, int N, uint32_t* indices, uint32_t* num_indices,
+	unsigned int num_blocks, unsigned int threads_per_block)
 {
 	uint32_t *cells_swap;
 	uint32_t *objects_swap;
@@ -554,11 +545,10 @@ void SortCells(uint32_t *cells, uint32_t *objects, uint32_t *cells_temp, uint32_
 		objects_swap = objects;
 		objects = objects_temp;
 		objects_temp = objects_swap;
-		
-
-		
 	}
+	GetCellIndex << < num_blocks, threads_per_block >> > (cells, N, indices, num_indices);
 }
+
 
 
 
@@ -574,17 +564,13 @@ void HandleCollisionGrid(Ball* balls, float XRange, float ZRange, float Height,
 
 	//申请内存
 	unsigned int cell_size = N * 8 * sizeof(uint32_t);
-	unsigned int num_cells_occupied;
-	/*unsigned int num_collisions;
-	unsigned int num_collisions_cpu;
-	unsigned int num_tests;
-	unsigned int num_tests_cpu;*/
 
 	uint32_t *cells_gpu;
 	uint32_t *cells_gpu_temp;
 	uint32_t *objects_gpu;
 	uint32_t *objects_gpu_temp;
-	unsigned int *temp_gpu;
+	uint32_t *indices_gpu;
+	uint32_t *indices_num_gpu;
 	uint32_t *radix_sums_gpu;
 
 	int num_radices = 1 << RADIX_LENGTH;
@@ -593,20 +579,48 @@ void HandleCollisionGrid(Ball* balls, float XRange, float ZRange, float Height,
 	cudaMalloc((void **)&cells_gpu_temp, cell_size);
 	cudaMalloc((void **)&objects_gpu, cell_size);
 	cudaMalloc((void **)&objects_gpu_temp, cell_size);
-	cudaMalloc((void **)&temp_gpu, 2 * sizeof(unsigned int));
+	cudaMalloc((void **)&indices_gpu, cell_size);
+	cudaMalloc((void **)&indices_num_gpu, sizeof(uint32_t));
 	cudaMalloc((void **)&radix_sums_gpu, num_radices * sizeof(uint32_t));
 
 
 	
 	//初始化cell和object
-	num_cells_occupied = InitCells(cells_gpu, objects_gpu, balls, N,
+	InitCells(cells_gpu, objects_gpu, balls, N,
 		XRange, ZRange, Height, GridSize, GridX, GridY, GridZ,
-		temp_gpu, num_blocks, threads_per_block);
+		num_blocks, threads_per_block);
 
 	//基数排序
 	SortCells(cells_gpu, objects_gpu, cells_gpu_temp, objects_gpu_temp, radix_sums_gpu, 
-		8 * N, num_blocks, threads_per_block);
+		8 * N, indices_gpu, indices_num_gpu, num_blocks, threads_per_block);
 	
+	/*
+	cudaDeviceSynchronize();
+	uint32_t *kebab1 = (uint32_t*)malloc(cell_size);
+	uint32_t *kebab2 = (uint32_t*)malloc(cell_size);
+	uint32_t *kebab3 = (uint32_t*)malloc(cell_size);
+	uint32_t *kebab4 = (uint32_t*)malloc(sizeof(uint32_t));
+	cudaMemcpy((void*)kebab1, (void*)cells_gpu, cell_size, cudaMemcpyDeviceToHost);
+	cudaMemcpy((void*)kebab2, (void*)objects_gpu, cell_size, cudaMemcpyDeviceToHost);
+	cudaMemcpy((void*)kebab3, (void*)indices_gpu, cell_size, cudaMemcpyDeviceToHost);
+	cudaMemcpy((void*)kebab4, (void*)indices_num_gpu, sizeof(uint32_t), cudaMemcpyDeviceToHost);
+	for (int i = 0; i < N * 8; i++)
+	{
+		int type1 = kebab1[i] & 1;
+		int z = (kebab1[i] >> 1) & 31;
+		int y = (kebab1[i] >> 9) & 31;
+		int x = (kebab1[i] >> 17) & 31;
+		int type2 = 1 - (kebab2[i] & 1);
+		int id = (kebab2[i] >> 1) & 7;
+		printf(("x = %d, y = %d, z = %d, type1 = %d, type2 = %d, id = %d\n"), x, y, z, type1, type2, id);
+	}
+	printf("indices num: %d\n", kebab4[0]);
+	for (int i = 0; i < kebab4[0]; i++)
+	{
+		printf("%d ", kebab3[i]);
+	}
+	free(kebab1);
+	*/
 
 	/*num_collisions = cudaCellCollide(d_cells, d_objects, d_positions,
 		d_velocities, d_dims, num_objects,
@@ -616,11 +630,12 @@ void HandleCollisionGrid(Ball* balls, float XRange, float ZRange, float Height,
 
 	
 
-	cudaFree(temp_gpu);
 	cudaFree(cells_gpu);
 	cudaFree(cells_gpu_temp);
 	cudaFree(objects_gpu);
 	cudaFree(objects_gpu_temp);
+	cudaFree(indices_gpu);
+	cudaFree(indices_num_gpu);
 	cudaFree(radix_sums_gpu);
 }
 
