@@ -583,7 +583,7 @@ __global__ void HandleCollisionCuda(uint32_t *cells, uint32_t *objects, Ball* ba
 		}
 
 		//不考虑空格子
-		if (cells[start] == UINT32_MAX) break;
+		//if (cells[start] == UINT32_MAX) break;
 
 		//找其中home的个数
 		int home_num = 0;
@@ -701,11 +701,11 @@ void HandleCollisionGrid(Ball* balls, float XRange, float ZRange, float Height,
 		XRange, ZRange, Height, GridSize, GridX, GridY, GridZ,
 		num_blocks, threads_per_block);
 
+
 	//基数排序
 	SortCells(cells_gpu, objects_gpu, cells_gpu_temp, objects_gpu_temp, radix_sums_gpu, 
 		8 * N, indices_gpu, indices_num_gpu, num_blocks, threads_per_block);
 	
-	cudaDeviceSynchronize();
 
 
 	uint32_t indices_num;
