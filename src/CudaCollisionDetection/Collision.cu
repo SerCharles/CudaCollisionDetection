@@ -582,9 +582,6 @@ __global__ void HandleCollisionCuda(uint32_t *cells, uint32_t *objects, Ball* ba
 			start = indices[cell_id - 1];
 		}
 
-		//不考虑空格子
-		//if (cells[start] == UINT32_MAX) break;
-
 		//找其中home的个数
 		int home_num = 0;
 		for (int i = start; i < end; i++)
